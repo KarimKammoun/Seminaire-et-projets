@@ -11,11 +11,12 @@ from sklearn.model_selection import GroupShuffleSplit
 from sklearn.neighbors import KNeighborsClassifier
 
 DOSSIER = Path(__file__).resolve().parent
+DONNEES = DOSSIER.parent  # Les fichiers .mat d'origine se trouvent dans TP.
 
 def charger_donnees():
-    sequences = loadmat(DOSSIER / 'sequences_ckp.mat')['sequences'].ravel()
-    labels = loadmat(DOSSIER / 'labels_ckp.mat')['labels'].ravel()
-    sujets = loadmat(DOSSIER / 'subject_labels_ckp.mat')['subject_labels'].ravel()
+    sequences = loadmat(DONNEES / 'sequences_ckp.mat')['sequences'].ravel()
+    labels = loadmat(DONNEES / 'labels_ckp.mat')['labels'].ravel()
+    sujets = loadmat(DONNEES / 'subject_labels_ckp.mat')['subject_labels'].ravel()
     if not (len(sequences) == len(labels) == len(sujets)):
         raise ValueError('Les nombres de séquences, labels et sujets diffèrent.')
     return sequences, labels, sujets
