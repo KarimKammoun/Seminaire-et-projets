@@ -1,6 +1,3 @@
-Séquences : 327 ; apprentissage : 259 ; test : 68
-Séparation par sujets : GroupShuffleSplit, test_size=0.2, random_state=42 ; k=3
-DTW : coût cumulé non normalisé ; Procrustes : rotation sans réflexion.
-base : 55.88 % (écart avec base : +0.00 points)
-procrustes : 61.76 % (écart avec base : +5.88 points)
-dtw : 70.59 % (écart avec base : +14.71 points)
+base : 55.88 % 
+procrustes : 61.76 % 
+dtw : 70.59 % 

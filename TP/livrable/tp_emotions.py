@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""TP : reconnaissance des émotions à partir de séquences de visages."""
 from pathlib import Path
 import argparse
 import csv
@@ -28,7 +26,6 @@ def charger_donnees():
 
 # QUESTION 1 : centrer et normaliser chaque trame avec la norme de Frobenius.
 def preforme(sequence):
-    # Passer de (points, temps, coordonnées) à (temps, points, coordonnées).
     trames = np.asarray(sequence, dtype=float).transpose(1, 0, 2)
     trames_centrees = trames - trames.mean(axis=1, keepdims=True)
     normes = np.linalg.norm(trames_centrees, axis=(1, 2), keepdims=True)
@@ -82,8 +79,6 @@ def distance_procrustes(sequence_a, sequence_b):
     distances = []
     for i in range(nombre_trames):
         x, y = sequence_a[i], sequence_b[i]
-        # Les trames sont déjà centrées et normalisées. On autorise la rotation,
-        # mais pas le changement d'échelle ni la réflexion (effet miroir).
         _, y_aligne, _ = procrustes(x, y, scaling=False, reflection=False)
         distances.append(distance_trames(x, y_aligne))
     return float(np.mean(distances))
@@ -92,7 +87,6 @@ def distance_procrustes(sequence_a, sequence_b):
 # QUESTION 6 : aligner les séquences dans le temps avec DTW.
 def distance_dtw(sequence_a, sequence_b):
     couts = couts_trames(sequence_a, sequence_b)
-    # Chaque case contient le meilleur coût cumulé pour atteindre cette paire.
     precedent = np.full(len(sequence_b) + 1, np.inf)
     precedent[0] = 0.0
     for ligne in couts:
@@ -101,7 +95,6 @@ def distance_dtw(sequence_a, sequence_b):
             meilleur_precedent = min(precedent[j], actuel[j - 1], precedent[j - 1])
             actuel[j] = cout + meilleur_precedent
         precedent = actuel
-    # Comme dans le code fourni, ce coût est une somme, non une moyenne.
     return float(precedent[-1])
 
 
