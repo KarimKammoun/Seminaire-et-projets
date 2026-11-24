@@ -1,122 +1,168 @@
 #!/usr/bin/env python3
-"""TP de reconnaissance d'émotions : formes, Procrustes, DTW et KNN."""
+"""TP : reconnaissance des émotions à partir de séquences de visages."""
 from pathlib import Path
 import argparse
 import csv
 import time
+
 import numpy as np
 from scipy.io import loadmat
 from sklearn.metrics import accuracy_score, confusion_matrix
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.neighbors import KNeighborsClassifier
+from procrustes_prof import procrustes
 
 DOSSIER = Path(__file__).resolve().parent
-DONNEES = DOSSIER.parent  # Les fichiers .mat d'origine se trouvent dans TP.
+DONNEES = DOSSIER.parent
+
 
 def charger_donnees():
+    """Les fichiers MATLAB sont dans TP, le dossier parent de livrable."""
     sequences = loadmat(DONNEES / 'sequences_ckp.mat')['sequences'].ravel()
     labels = loadmat(DONNEES / 'labels_ckp.mat')['labels'].ravel()
     sujets = loadmat(DONNEES / 'subject_labels_ckp.mat')['subject_labels'].ravel()
     if not (len(sequences) == len(labels) == len(sujets)):
-        raise ValueError('Les nombres de séquences, labels et sujets diffèrent.')
+        raise ValueError('Le nombre de séquences, de labels et de sujets doit être identique.')
     return sequences, labels, sujets
 
+
+# QUESTION 1 : centrer et normaliser chaque trame avec la norme de Frobenius.
 def preforme(sequence):
-    # Entrée : points × temps × coordonnées. Sortie : temps × points × coordonnées.
-    frames = np.asarray(sequence, dtype=float).transpose(1, 0, 2)
-    frames = frames - frames.mean(axis=1, keepdims=True)
-    normes = np.linalg.norm(frames, axis=(1, 2), keepdims=True)
+    # Passer de (points, temps, coordonnées) à (temps, points, coordonnées).
+    trames = np.asarray(sequence, dtype=float).transpose(1, 0, 2)
+    trames_centrees = trames - trames.mean(axis=1, keepdims=True)
+    normes = np.linalg.norm(trames_centrees, axis=(1, 2), keepdims=True)
     if np.any(normes < 1e-12):
-        raise ValueError('Une trame a une norme nulle après centrage.')
-    return frames / normes
+        raise ValueError('Impossible de normaliser une trame de norme nulle.')
+    return trames_centrees / normes
 
-def couts_frames(a, b):
-    produits = a.reshape(len(a), -1) @ b.reshape(len(b), -1).T
-    return np.arccos(np.clip(produits, -1, 1))
 
-def distance_base(a, b):
-    n = min(len(a), len(b))
-    produits = np.einsum('tij,tij->t', a[:n], b[:n])
-    return float(np.mean(np.arccos(np.clip(produits, -1, 1))))
+# QUESTION 2 : distance angulaire entre deux trames normalisées.
+def distance_trames(x, y):
+    produit_scalaire = np.sum(x * y)
+    return float(np.arccos(np.clip(produit_scalaire, -1.0, 1.0)))
 
-def distance_procrustes(a, b):
-    # Rotation optimale SO(2), sans réflexion ni redimensionnement supplémentaire.
-    # Pour deux préformes, maximiser le produit scalaire revient à minimiser
-    # la distance Procrustes. Équivalent à un alignement orthogonal par SVD.
-    n = min(len(a), len(b))
-    x, y = a[:n], b[:n]
-    c = np.sum(x[:, :, 0]*y[:, :, 0] + x[:, :, 1]*y[:, :, 1], axis=1)
-    s = np.sum(x[:, :, 0]*y[:, :, 1] - x[:, :, 1]*y[:, :, 0], axis=1)
-    produits_optimaux = np.sqrt(c*c + s*s)
-    return float(np.mean(np.arccos(np.clip(produits_optimaux, -1, 1))))
 
-def distance_dtw(a, b):
-    # Coût cumulé minimal, tel que la fonction dtw fournie dans le TP.
-    couts = couts_frames(a, b)
-    previous = np.full(len(b) + 1, np.inf)
-    previous[0] = 0.0
-    for ligne in couts:
-        current = np.full(len(b) + 1, np.inf)
-        for j, cost in enumerate(ligne, 1):
-            current[j] = cost + min(previous[j], current[j-1], previous[j-1])
-        previous = current
-    return float(previous[-1])
+def couts_trames(sequence_a, sequence_b):
+    """Distances entre chaque paire de trames, utilisées par DTW."""
+    a = sequence_a.reshape(len(sequence_a), -1)
+    b = sequence_b.reshape(len(sequence_b), -1)
+    produits = a @ b.T
+    return np.arccos(np.clip(produits, -1.0, 1.0))
+
+
+# QUESTION 3 : distance moyenne entre trames de même indice et matrice complète.
+def distance_base(sequence_a, sequence_b):
+    nombre_trames = min(len(sequence_a), len(sequence_b))
+    distances = [distance_trames(sequence_a[i], sequence_b[i])
+                 for i in range(nombre_trames)]
+    return float(np.mean(distances))
+
 
 def matrices_distances(sequences):
-    n = len(sequences)
-    matrices = {nom: np.zeros((n, n)) for nom in ('base', 'procrustes', 'dtw')}
+    nombre = len(sequences)
+    matrices = {nom: np.zeros((nombre, nombre)) for nom in ('base', 'procrustes', 'dtw')}
+    fonctions = {'base': distance_base, 'procrustes': distance_procrustes, 'dtw': distance_dtw}
     debut = time.monotonic()
-    for i in range(n):
+    for i in range(nombre):
         if i % 20 == 0:
-            print(f'Distances : {i}/{n} lignes ({time.monotonic()-debut:.0f} s)', flush=True)
-        for j in range(i + 1, n):
-            for nom, fonction in [('base', distance_base), ('procrustes', distance_procrustes), ('dtw', distance_dtw)]:
-                d = fonction(sequences[i], sequences[j])
-                matrices[nom][i, j] = matrices[nom][j, i] = d
+            print(f'Distances : {i}/{nombre} lignes ({time.monotonic() - debut:.0f} s)', flush=True)
+        # Les distances sont symétriques : calculer une moitié suffit.
+        for j in range(i + 1, nombre):
+            for nom, fonction in fonctions.items():
+                distance = fonction(sequences[i], sequences[j])
+                matrices[nom][i, j] = distance
+                matrices[nom][j, i] = distance
     return matrices
+
+
+# QUESTION 5 : aligner les trames avec la fonction Procrustes du professeur.
+def distance_procrustes(sequence_a, sequence_b):
+    nombre_trames = min(len(sequence_a), len(sequence_b))
+    distances = []
+    for i in range(nombre_trames):
+        x, y = sequence_a[i], sequence_b[i]
+        # Les trames sont déjà centrées et normalisées. On autorise la rotation,
+        # mais pas le changement d'échelle ni la réflexion (effet miroir).
+        _, y_aligne, _ = procrustes(x, y, scaling=False, reflection=False)
+        distances.append(distance_trames(x, y_aligne))
+    return float(np.mean(distances))
+
+
+# QUESTION 6 : aligner les séquences dans le temps avec DTW.
+def distance_dtw(sequence_a, sequence_b):
+    couts = couts_trames(sequence_a, sequence_b)
+    # Chaque case contient le meilleur coût cumulé pour atteindre cette paire.
+    precedent = np.full(len(sequence_b) + 1, np.inf)
+    precedent[0] = 0.0
+    for ligne in couts:
+        actuel = np.full(len(sequence_b) + 1, np.inf)
+        for j, cout in enumerate(ligne, start=1):
+            meilleur_precedent = min(precedent[j], actuel[j - 1], precedent[j - 1])
+            actuel[j] = cout + meilleur_precedent
+        precedent = actuel
+    # Comme dans le code fourni, ce coût est une somme, non une moyenne.
+    return float(precedent[-1])
+
+
+# QUESTION 4 : classification KNN et calcul du taux de reconnaissance.
+def evaluer(matrices, labels, sujets, train, test, k, dossier):
+    dossier.mkdir(exist_ok=True)
+    np.savez_compressed(dossier / 'matrices_distances.npz', **matrices)
+    resultats = []
+    classes = np.unique(labels)
+
+    for nom, matrice in matrices.items():
+        modele = KNeighborsClassifier(n_neighbors=k, metric='precomputed')
+        modele.fit(matrice[np.ix_(train, train)], labels[train])
+        predictions = modele.predict(matrice[np.ix_(test, train)])
+        taux = 100 * accuracy_score(labels[test], predictions)
+        resultats.append((nom, taux))
+        print(f'{nom:12s} : {taux:.2f} %')
+
+        confusion = confusion_matrix(labels[test], predictions, labels=classes)
+        np.savetxt(dossier / f'confusion_{nom}.csv', confusion, delimiter=',', fmt='%d',
+                   header=','.join(map(str, classes)), comments='')
+        with (dossier / f'predictions_{nom}.csv').open('w', newline='', encoding='utf-8') as fichier:
+            ecrivain = csv.writer(fichier)
+            ecrivain.writerow(['indice_sequence', 'sujet', 'label_reel', 'label_predit'])
+            ecrivain.writerows(zip(test, sujets[test], labels[test], predictions))
+
+    with (dossier / 'resultats.txt').open('w', encoding='utf-8') as fichier:
+        fichier.write(f'Séquences : {len(labels)} ; apprentissage : {len(train)} ; test : {len(test)}\n')
+        fichier.write(f'Séparation par sujets : GroupShuffleSplit, test_size=0.2, random_state=42 ; k={k}\n')
+        fichier.write('DTW : coût cumulé non normalisé ; Procrustes : rotation sans réflexion.\n')
+        for nom, taux in resultats:
+            ecart = taux - resultats[0][1]
+            fichier.write(f'{nom} : {taux:.2f} % (écart avec base : {ecart:+.2f} points)\n')
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--k', type=int, default=3, help='Nombre de voisins (défaut : 3)')
-    parser.add_argument('--limite', type=int, help='Nombre de séquences pour un essai rapide, pas pour le résultat final')
+    parser.add_argument('--limite', type=int, help='Nombre de séquences pour un essai rapide')
     args = parser.parse_args()
     sequences, labels, sujets = charger_donnees()
     if args.limite is not None:
         if args.limite < 10 or args.limite > len(sequences):
-            parser.error('--limite doit être comprise entre 10 et le nombre de séquences')
-        sequences, labels, sujets = sequences[:args.limite], labels[:args.limite], sujets[:args.limite]
-    sequences = [preforme(s) for s in sequences]
-    train, test = next(GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42).split(sequences, labels, groups=sujets))
+            parser.error('--limite doit être comprise entre 10 et le nombre total de séquences')
+        sequences = sequences[:args.limite]
+        labels = labels[:args.limite]
+        sujets = sujets[:args.limite]
+
+    sequences = [preforme(sequence) for sequence in sequences]
+    separation = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
+    train, test = next(separation.split(sequences, labels, groups=sujets))
     if args.k < 1 or args.k > len(train):
-        parser.error('--k doit être entre 1 et la taille de l’ensemble d’apprentissage')
+        parser.error('--k doit être compris entre 1 et le nombre de séquences d’apprentissage')
     print(f'{len(sequences)} séquences ; apprentissage : {len(train)}, test : {len(test)} ; k={args.k}')
     print('Séparation par personne, graine 42. Calcul des matrices complètes...')
+
     matrices = matrices_distances(sequences)
     dossier = DOSSIER / ('resultats_essai' if args.limite else 'resultats')
-    dossier.mkdir(exist_ok=True)
-    np.savez_compressed(dossier / 'matrices_distances.npz', **matrices)
-    lignes = []
-    for nom, matrice in matrices.items():
-        knn = KNeighborsClassifier(n_neighbors=args.k, metric='precomputed')
-        knn.fit(matrice[np.ix_(train, train)], labels[train])
-        prediction = knn.predict(matrice[np.ix_(test, train)])
-        taux = 100 * accuracy_score(labels[test], prediction)
-        lignes.append((nom, taux))
-        classes = np.unique(labels)
-        confusion = confusion_matrix(labels[test], prediction, labels=classes)
-        np.savetxt(dossier / f'confusion_{nom}.csv', confusion, delimiter=',', fmt='%d',
-                   header=','.join(map(str, classes)), comments='')
-        with (dossier / f'predictions_{nom}.csv').open('w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f); writer.writerow(['indice_sequence', 'sujet', 'label_reel', 'label_predit'])
-            writer.writerows(zip(test, sujets[test], labels[test], prediction))
-        print(f'{nom:12s} : {taux:.2f} %')
-    with (dossier / 'resultats.txt').open('w', encoding='utf-8') as f:
-        f.write(f'Séquences : {len(sequences)} ; apprentissage : {len(train)} ; test : {len(test)}\n')
-        f.write(f'Séparation par sujets : GroupShuffleSplit, test_size=0.2, random_state=42 ; k={args.k}\n')
-        f.write('DTW : coût cumulé non normalisé ; Procrustes : rotation sans réflexion.\n')
-        for nom, taux in lignes:
-            f.write(f'{nom} : {taux:.2f} % (écart avec base : {taux-lignes[0][1]:+.2f} points)\n')
+    evaluer(matrices, labels, sujets, train, test, args.k, dossier)
     print(f'Fichiers enregistrés dans {dossier}')
+
 
 if __name__ == '__main__':
     main()

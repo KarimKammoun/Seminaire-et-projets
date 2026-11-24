@@ -31,7 +31,8 @@ Sur macOS ou Linux, remplace `py` par `python3` dans les commandes.
 
 ## Que lire ?
 
-- `rapport.md` : méthode et résultats ; complète la date, relis le rapport et exporte-le en PDF si demandé.
+- `rapport.pdf` : rapport prêt à lire ; relis-le et complète la date si nécessaire. `rapport.md` est sa version modifiable.
+- `procrustes_prof.py` : fonction Procrustes issue du code fourni, utilisée par le programme ; ne pas séparer du fichier `tp_emotions.py`.
 - `resultats/resultats.txt` : taux et paramètres de l'expérience.
 - `resultats/predictions_*.csv` : vrais labels et prédictions pour chaque séquence de test.
 - `resultats/confusion_*.csv` : matrices de confusion ; lignes = vraies classes, colonnes = classes prédites dans l'ordre de l'en-tête.

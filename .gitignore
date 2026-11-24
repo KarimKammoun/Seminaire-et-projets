@@ -1,0 +1,5 @@
+# Environnement Python et fichiers temporaires
+.venv/
+__pycache__/
+*.pyc
+TP/livrable/resultats_essai/
